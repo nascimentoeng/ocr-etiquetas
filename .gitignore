@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+foto_original.jfif
+etiqueta_recortada.jpg
+etiqueta_rotacionada.jpg
+etiqueta_rotacionada_esquerda.jpg
+etiqueta_melhorada.jpg
+area_item_number.jpg
+resultado_ocr.txt
