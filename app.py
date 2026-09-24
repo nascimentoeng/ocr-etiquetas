@@ -5,6 +5,12 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from database import (
+    RegistroDuplicadoError,
+    criar_tabela,
+    listar_registros,
+    salvar_registro,
+)
 from extrair_etiqueta import extrair_dados
 
 
@@ -15,12 +21,43 @@ st.set_page_config(
 )
 
 
-# Inicializa o armazenamento temporário da sessão
+DATABASE_URL = st.secrets["TURSO_DATABASE_URL"]
+AUTH_TOKEN = st.secrets["TURSO_AUTH_TOKEN"]
+CODIGO_CLIENTE = "101015"
+
+
+@st.cache_resource
+def inicializar_banco():
+    criar_tabela(
+        DATABASE_URL,
+        AUTH_TOKEN,
+    )
+
+    return True
+
+
+try:
+    inicializar_banco()
+
+except Exception as erro:
+    st.error(
+        "Não foi possível conectar ao banco de dados: "
+        f"{erro}"
+    )
+    st.stop()
+
+
 if "resultado_ocr" not in st.session_state:
     st.session_state.resultado_ocr = None
 
-if "registros_salvos" not in st.session_state:
-    st.session_state.registros_salvos = []
+if "campo_item_number" not in st.session_state:
+    st.session_state.campo_item_number = ""
+
+if "campo_box_number" not in st.session_state:
+    st.session_state.campo_box_number = ""
+
+if "campo_quantity" not in st.session_state:
+    st.session_state.campo_quantity = 0
 
 
 st.title("Leitor de etiquetas")
@@ -30,9 +67,19 @@ st.write(
     "Item Number, Box Number e Quantity."
 )
 
+st.info(
+    f"Código Cliente utilizado: {CODIGO_CLIENTE}"
+)
+
+
 arquivo = st.file_uploader(
     "Selecione a imagem",
-    type=["jpg", "jpeg", "jfif", "png"],
+    type=[
+        "jpg",
+        "jpeg",
+        "jfif",
+        "png",
+    ],
 )
 
 
@@ -47,7 +94,9 @@ if arquivo is not None:
         "Processar etiqueta",
         type="primary",
     ):
-        extensao = os.path.splitext(arquivo.name)[1]
+        extensao = os.path.splitext(
+            arquivo.name
+        )[1]
 
         with tempfile.NamedTemporaryFile(
             delete=False,
@@ -56,7 +105,10 @@ if arquivo is not None:
             arquivo_temporario.write(
                 arquivo.getbuffer()
             )
-            caminho_temporario = arquivo_temporario.name
+
+            caminho_temporario = (
+                arquivo_temporario.name
+            )
 
         try:
             with st.spinner(
@@ -67,19 +119,36 @@ if arquivo is not None:
                 )
 
             st.session_state.resultado_ocr = resultado
-            st.session_state.nome_arquivo = arquivo.name
 
-            st.success("Processamento concluído.")
+            st.session_state.campo_item_number = (
+                resultado["item_number"] or ""
+            )
+
+            st.session_state.campo_box_number = (
+                resultado["box_number"] or ""
+            )
+
+            st.session_state.campo_quantity = (
+                resultado["quantity"] or 0
+            )
+
+            st.success(
+                "Processamento concluído."
+            )
 
         except Exception as erro:
             st.error(
-                "Não foi possível processar a imagem: "
-                f"{erro}"
+                "Não foi possível processar "
+                f"a imagem: {erro}"
             )
 
         finally:
-            if os.path.exists(caminho_temporario):
-                os.remove(caminho_temporario)
+            if os.path.exists(
+                caminho_temporario
+            ):
+                os.remove(
+                    caminho_temporario
+                )
 
 
 if st.session_state.resultado_ocr is not None:
@@ -94,13 +163,11 @@ if st.session_state.resultado_ocr is not None:
 
     item_number = st.text_input(
         "Item Number",
-        value=resultado["item_number"] or "",
         key="campo_item_number",
     )
 
     box_number = st.text_input(
         "Box Number",
-        value=resultado["box_number"] or "",
         key="campo_box_number",
     )
 
@@ -108,12 +175,15 @@ if st.session_state.resultado_ocr is not None:
         "Quantity",
         min_value=0,
         step=1,
-        value=resultado["quantity"] or 0,
         key="campo_quantity",
     )
 
-    with st.expander("Ver texto bruto do OCR"):
-        st.text(resultado["texto_ocr"])
+    with st.expander(
+        "Ver texto bruto do OCR"
+    ):
+        st.text(
+            resultado["texto_ocr"]
+        )
 
     if st.button(
         "Confirmar e salvar",
@@ -121,12 +191,20 @@ if st.session_state.resultado_ocr is not None:
     ):
         erros = []
 
-        if not item_number.strip():
-            erros.append(
+        item_number_normalizado = (
+            item_number.strip().upper()
+        )
+
+        box_number_normalizado = (
+            box_number.strip().upper()
+        )
+
+        if not item_number_normalizado:
+                      erros.append(
                 "O Item Number deve ser preenchido."
             )
 
-        if not box_number.strip():
+        if not box_number_normalizado:
             erros.append(
                 "O Box Number deve ser preenchido."
             )
@@ -145,44 +223,74 @@ if st.session_state.resultado_ocr is not None:
                 ZoneInfo("America/Sao_Paulo")
             )
 
-            registro = {
-                "data_hora": data_hora.strftime(
-                    "%d/%m/%Y %H:%M:%S"
-                ),
-                "item_number": item_number
-                .strip()
-                .upper(),
-                "box_number": box_number
-                .strip()
-                .upper(),
-                "quantity": int(quantity),
-                "nome_arquivo": st.session_state.get(
-                    "nome_arquivo",
-                    "",
-                ),
-            }
-
-            st.session_state.registros_salvos.append(
-                registro
+            data_registro = data_hora.strftime(
+                "%Y-%m-%d"
             )
 
-            st.success(
-                "Registro salvo temporariamente."
-            )
+            try:
+                registro_id = salvar_registro(
+                    database_url=DATABASE_URL,
+                    auth_token=AUTH_TOKEN,
+                    data_hora=data_hora.strftime(
+                        "%d/%m/%Y %H:%M:%S"
+                    ),
+                    data_registro=data_registro,
+                    codigo_cliente=CODIGO_CLIENTE,
+                    item_number=item_number_normalizado,
+                    box_number=box_number_normalizado,
+                    quantity=int(quantity),
+                )
 
-            st.info(
-                "Nesta etapa, os dados permanecem "
-                "salvos somente durante esta sessão. "
-                "Posteriormente, conectaremos ao banco."
-            )
+                st.success(
+                    "Registro salvo permanentemente "
+                    "no banco."
+                )
+
+                st.info(
+                    f"Registro ID: {registro_id} | "
+                    f"Código Cliente: {CODIGO_CLIENTE}"
+                )
+
+            except RegistroDuplicadoError as erro:
+                st.warning(str(erro))
+
+                st.info(
+                    "Nenhum novo registro foi criado. "
+                    "O mesmo Box Number poderá ser "
+                    "registrado novamente em outro dia."
+                )
+
+            except Exception as erro:
+                st.error(
+                    "Não foi possível salvar o registro "
+                    f"no banco de dados: {erro}"
+                )
 
 
-if st.session_state.registros_salvos:
-    st.divider()
-    st.subheader("Registros salvos nesta sessão")
+st.divider()
+st.subheader("Registros salvos no banco")
 
-    st.dataframe(
-        st.session_state.registros_salvos,
-        use_container_width=True,
-        hide_index=True,
+
+try:
+    registros = listar_registros(
+        DATABASE_URL,
+        AUTH_TOKEN,
+    )
+
+    if registros:
+        st.dataframe(
+            registros,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.info(
+            "Nenhum registro foi salvo até o momento."
+        )
+
+except Exception as erro:
+    st.warning(
+        "Não foi possível carregar os registros: "
+        f"{erro}"
     )
