@@ -21,3 +21,4 @@ resultado_teste_*.txt
 extrair_etiqueta_v2.py
 app_backup.py
 .streamlit/secrets.toml
+app_antes_espanhol.py
